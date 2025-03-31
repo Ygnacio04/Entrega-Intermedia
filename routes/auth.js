@@ -1,8 +1,7 @@
 const express = require("express");
-const { validatorRegister, validatorLogin, validatorValidateEmail, validatorCompanyPatch } = require("../validators/auth");
-
+const { validatorRegister, validatorLogin, validatorValidateEmail, validatorSendInvitation, validatorInvitationId  } = require("../validators/auth");
 const {uploadMiddlewareMemory} = require("../utils/handleStorage");
-const authMiddleware = require("../middleware/session")
+const authMiddleware = require("../middleware/session");
 
 const router = express.Router();
 const { 
@@ -14,74 +13,111 @@ const {
     deleteUserCtrl,
     forgotPasswordCtrl,
     resetPasswordCtrl,  
-    uploadLogo
+    uploadLogo,
+    sendInvitationCtrl,
+    getReceivedInvitationsCtrl,
+    getSentInvitationsCtrl,
+    acceptInvitationCtrl,
+    rejectInvitationCtrl,
+    cancelInvitationCtrl
 } = require("../controllers/user");
-
-// Middleware para la verificación de JWT
-const { verifyToken } = require("../utils/handleJwt");
-
-// ** Rutas de registro y verificación de email **
 
 // Ruta para el registro de usuario
 router.post(
     "/register", 
-    validatorRegister,  // Aplicando el validador
+    validatorRegister,
     registerCtrl
 );
 
 // Ruta para verificar el email
 router.post(
     "/verify-email", 
-    validatorValidateEmail,  // Aplicando el validador
+    validatorValidateEmail,
     verifyEmailCtrl
 );
 
 // Ruta para el login
 router.post(
     "/login", 
-    validatorLogin,  // Aplicando el validador
+    validatorLogin,
     loginCtrl
 );
 
-// Ruta para el olvido de la contraseña
+// Ruta para recuperar contraseña
 router.post(
     "/forgot-password", 
-    // Aplicando el validador
     forgotPasswordCtrl
 );
 
-// Ruta para el restablecimiento de la contraseña
+// Ruta para restablecer contraseña
 router.post(
     "/reset-password", 
     resetPasswordCtrl
 );
 
+// Rutas protegidas por autenticación
+router.use(authMiddleware); // Aplicar middleware de autenticación a todas las rutas siguientes
+
 // Ruta para el onboarding
 router.put(
-    "/onboarding",
-    authMiddleware, 
+    "/onboarding", 
     updateUserCtrl
 );
 
-// Ruta para la eliminación de usuario
-router.delete(
-    "/delete", 
-    authMiddleware,
-    deleteUserCtrl
-);
-
-// Ruta para obtener los datos del usuario a partir del token JWT
+// Ruta para obtener datos del usuario actual
 router.get(
-    "/me",
-    authMiddleware, 
-    getUserFromTokenCtrl  // Controlador para obtener el usuario
+    "/me", 
+    getUserFromTokenCtrl
 );
 
+// Ruta para actualizar logo
 router.patch(
     "/logo",
-    authMiddleware,
     uploadMiddlewareMemory.single("image"),
     uploadLogo
 );
 
+// Ruta para eliminar usuario
+router.delete(
+    "/delete", 
+    deleteUserCtrl
+);
+router.post(
+    "/invitations/send",
+    validatorSendInvitation,
+    sendInvitationCtrl
+);
+
+// Obtener invitaciones recibidas
+router.get(
+    "/invitations/received",
+    getReceivedInvitationsCtrl
+);
+
+// Obtener invitaciones enviadas
+router.get(
+    "/invitations/sent",
+    getSentInvitationsCtrl
+);
+
+// Aceptar una invitación
+router.put(
+    "/invitations/accept/:invitationId",
+    validatorInvitationId,
+    acceptInvitationCtrl
+);
+
+// Rechazar una invitación
+router.put(
+    "/invitations/reject/:invitationId",
+    validatorInvitationId,
+    rejectInvitationCtrl
+);
+
+// Cancelar una invitación enviada
+router.delete(
+    "/invitations/cancel/:invitationId",
+    validatorInvitationId,
+    cancelInvitationCtrl
+);
 module.exports = router;

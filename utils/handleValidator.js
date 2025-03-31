@@ -1,14 +1,14 @@
 const { validationResult } = require("express-validator");
 
 // Función para manejar errores de validación
-const handleValidator = (req, res, next) => {
-  const errors = validationResult(req);
-
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ errors: errors.array() });
+const validateResults = (req, res, next) => {
+  try {
+    validationResult(req).throw();
+    return next();
+  } catch (err) {
+    res.status(422);
+    res.send({ errors: err.array() });
   }
-
-  next(); // Si no hay errores, continúa al siguiente middleware o controlador
 };
 
-module.exports = { handleValidator };
+module.exports = validateResults;

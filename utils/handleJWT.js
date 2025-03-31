@@ -7,17 +7,17 @@ const tokenSign = async (user) => {
     role: user.role,
     email: user.email,
   };
-  const token = jwt.sign(payload, process.env.JWT_SECRET_KEY, { expiresIn: "24h" });
+  const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "24h" });
   return token;
 };
 
 // Verificar un JWT
 const verifyToken = (token) => {
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET_KEY);
-    return decoded;
+    return jwt.verify(token, process.env.JWT_SECRET);
   } catch (error) {
-    throw new Error("Token inválido o expirado.");
+    console.error("Error al verificar token:", error);
+    return null;
   }
 };
 

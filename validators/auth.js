@@ -1,5 +1,6 @@
-const { check, validationResult } = require('express-validator');
+const { check } = require('express-validator');
 const validateResults = require("../utils/handleValidator");
+
 const validatorRegister = [
     check('firstName')
         .notEmpty().withMessage('First name is required')
@@ -15,6 +16,7 @@ const validatorRegister = [
         .isLength({ min: 8 }).withMessage('Password must be at least 8 characters long'),
     (req, res, next) => validateResults(req, res, next)
 ];
+
 const validatorLogin = [
     check('email')
         .notEmpty().withMessage('Email is required')
@@ -24,15 +26,17 @@ const validatorLogin = [
         .isLength({ min: 8 }).withMessage('Password must be at least 8 characters long'),
     (req, res, next) => validateResults(req, res, next)
 ];
+
 const validatorValidateEmail = [
     check('email')
         .notEmpty().withMessage('Email is required')
         .isEmail().withMessage('Email is invalid'),
-    check('code')
-        .notEmpty().withMessage('Code is required')
-        .isLength(4).withMessage('Code has 4 characters'),
+    check('verificationCode')
+        .notEmpty().withMessage('Verification code is required')
+        .isString().withMessage('Verification code must be a string'),
     (req, res, next) => validateResults(req, res, next)
 ];
+
 const validatorCompanyPatch = [
     check('company').isObject().withMessage('Company is required'),
     check('company.name')
@@ -53,4 +57,47 @@ const validatorCompanyPatch = [
     (req, res, next) => validateResults(req, res, next)
 ];
 
-module.exports = { validatorRegister, validatorLogin, validatorValidateEmail, validatorCompanyPatch };
+const validatorForgotPassword = [
+    check('email')
+        .notEmpty().withMessage('Email is required')
+        .isEmail().withMessage('Email is invalid'),
+    (req, res, next) => validateResults(req, res, next)
+];
+
+const validatorResetPassword = [
+    check('token')
+        .notEmpty().withMessage('Token is required'),
+    check('newPassword')
+        .notEmpty().withMessage('New password is required')
+        .isLength({ min: 8 }).withMessage('Password must be at least 8 characters long'),
+    (req, res, next) => validateResults(req, res, next)
+];
+
+
+const validatorSendInvitation = [
+    check('email')
+        .notEmpty().withMessage('Email is required')
+        .isEmail().withMessage('Invalid email format'),
+    check('role')
+        .optional()
+        .isIn(['user', 'admin']).withMessage('Role must be either user or admin'),
+    (req, res, next) => validateResults(req, res, next)
+];
+
+const validatorInvitationId = [
+    check('invitationId')
+        .notEmpty().withMessage('Invitation ID is required')
+        .isMongoId().withMessage('Invalid invitation ID format'),
+    (req, res, next) => validateResults(req, res, next)
+];
+
+module.exports = { 
+    validatorRegister, 
+    validatorLogin, 
+    validatorValidateEmail, 
+    validatorCompanyPatch,
+    validatorForgotPassword,
+    validatorResetPassword,
+    validatorSendInvitation,
+    validatorInvitationId
+};

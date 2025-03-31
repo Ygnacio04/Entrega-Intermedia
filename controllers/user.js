@@ -4,19 +4,18 @@ const { encrypt, compare } = require("../utils/handlePassword");
 const { handleHttpError } = require("../utils/handleHttpError");
 const uploadToPinata = require("../utils/uploadToPinata");
 const { usersModel } = require("../models");
-const nodemailer = require('nodemailer');
 
 // Generador de código de verificación
 const generateVerificationCode = () => Math.floor(100000 + Math.random() * 900000).toString();
 
-// **Registro de usuario**
+// Registro de usuario
 const registerCtrl = async (req, res) => {
     try {
         req = matchedData(req);
         
         // Verificar si el usuario ya existe
         const existingUser = await usersModel.findOne({ email: req.email });
-        if (existingUser && existingUser.status === 1) {
+        if (existingUser && existingUser.validated === 1) {
             return handleHttpError(res, "USER_ALREADY_EXISTS", 409);
         }
 
@@ -27,7 +26,16 @@ const registerCtrl = async (req, res) => {
         const verificationCode = generateVerificationCode();
         const maxAttempts = 3;
 
-        const body = { ...req, password: hashedPassword, verificationCode, verificationAttempts: maxAttempts };
+        //Crear usuario no verificado
+        const body = { 
+            firstName: req.firstName,
+            lastName: req.lastName,
+            email: req.email, 
+            password: hashedPassword, 
+            verificationCode, 
+            verificationAttempts: maxAttempts,
+        };
+        
         const dataUser = await usersModel.create(body);
         dataUser.set('password', undefined, { strict: false }); // Excluir la contraseña del resultado
 
@@ -43,7 +51,7 @@ const registerCtrl = async (req, res) => {
     }
 };
 
-// **Validación de email**
+// *Validación de email*
 const verifyEmailCtrl = async (req, res) => {
     try {
         const { email, verificationCode } = req.body;
@@ -55,11 +63,13 @@ const verifyEmailCtrl = async (req, res) => {
 
         if (user.verificationCode !== verificationCode) {
             return res.status(400).send({
-                message: "Código de verificación incorrecto"
+                message: "INVALID_VERIFICATION_CODE"
             });
         }
 
-        user.status = 1; // El usuario es verificado
+         // El usuario es verificado
+        user.validated = true;
+        user.verificationCode = undefined; // Limpiar el código de verificación
         await user.save();
 
         res.send({ message: "Correo electrónico verificado correctamente" });
@@ -69,20 +79,22 @@ const verifyEmailCtrl = async (req, res) => {
     }
 };
 
-// **Login**
+// Login
 const loginCtrl = async (req, res) => {
     try {
         req = matchedData(req);
-        const user = await usersModel.findOne({ email: req.email }).select("password name role email status");
+        const user = await usersModel.findOne({ email: req.email })
+            .select("password firstName lastName role email validated");
 
         if (!user) {
             return handleHttpError(res, "USER_NOT_EXISTS", 404);
         }
 
-        if (user.status !== 1) {
+        // Verificar validated
+        if (!user.validated) {
             return handleHttpError(res, "EMAIL_NOT_VERIFIED", 403);
         }
-
+        // Comparar la contraseña ingresada con la almacenada
         const check = await compare(req.password, user.password);
         if (!check) {
             return handleHttpError(res, "INVALID_PASSWORD", 401);
@@ -102,7 +114,7 @@ const loginCtrl = async (req, res) => {
     }
 };
 
-// **Obtener el usuario a partir del token JWT**
+// Obtener el usuario a partir del token JWT
 const getUserFromTokenCtrl = async (req, res) => {
     try {
         const userId = req.user._id;
@@ -119,13 +131,16 @@ const getUserFromTokenCtrl = async (req, res) => {
     }
 };
 
-// **Actualizar datos del usuario (onboarding)**
+// Actualizar datos del usuario
 const updateUserCtrl = async (req, res) => {
     try {
-        const { id } = req.params;
+        const userId = req.user._id; // Usar ID del token JWT
         const updateData = req.body;
 
-        const updatedUser = await usersModel.findByIdAndUpdate(id, updateData, { new: true });
+        // Filtrar campos sensibles que no deberían actualizarse directamente
+        const { password, verificationCode, validated, ...safeUpdateData } = updateData;
+
+        const updatedUser = await usersModel.findByIdAndUpdate(userId, safeUpdateData, { new: true });
 
         if (!updatedUser) {
             return handleHttpError(res, "USER_NOT_FOUND", 404);
@@ -138,7 +153,7 @@ const updateUserCtrl = async (req, res) => {
     }
 };
 
-// **Eliminar usuario (hard/soft)**
+// Eliminar usuario (hard/soft)
 const deleteUserCtrl = async (req, res) => {
     try {
         const userId = req.user._id;
@@ -164,7 +179,7 @@ const deleteUserCtrl = async (req, res) => {
     }
 };
 
-// **Recuperación de contraseña**
+// Recuperación de contraseña
 const forgotPasswordCtrl = async (req, res) => {
     try {
         const { email } = req.body;
@@ -191,7 +206,7 @@ const forgotPasswordCtrl = async (req, res) => {
     }
 };
 
-// **Restablecimiento de contraseña**
+// Restablecimiento de contraseña
 const resetPasswordCtrl = async (req, res) => {
     try {
         const { token, newPassword } = req.body;
@@ -219,64 +234,340 @@ const resetPasswordCtrl = async (req, res) => {
     }
 };
 
-// **Invitar a un compañero a la compañía**
-const inviteUserToCompanyCtrl = async (req, res) => {
+/**
+ * Enviar invitación a un usuario
+ * @param {Object} req 
+ * @param {Object} res 
+ */
+const sendInvitationCtrl = async (req, res) => {
     try {
-        const { email } = req.body;
+        const { email, role = 'user' } = req.body;
+        const currentUser = req.user;
 
-        const userId = req.user._id;
-        const user = await usersModel.findById(userId).select("company");
-
-        if (!user || !user.company) {
-            return handleHttpError(res, "USER_NOT_FOUND_OR_NO_COMPANY", 404);
+        // Verificar si el usuario tiene una compañía
+        if (!currentUser.company || !currentUser.company.name) {
+            return handleHttpError(res, "YOU_NEED_A_COMPANY_TO_INVITE", 400);
         }
 
+        // Buscar al usuario invitado por email
         const invitedUser = await usersModel.findOne({ email });
-
-        if (invitedUser) {
-            if (invitedUser.company && invitedUser.company._id.toString() === user.company._id.toString()) {
-                return handleHttpError(res, "USER_ALREADY_IN_COMPANY", 409);
-            }
-
-            invitedUser.company = user.company._id;
-            invitedUser.role = "guest";
-            await invitedUser.save();
-
-            return res.send({ message: `Usuario ${email} invitado a la compañía como guest` });
-        } else {
-            const invitationToken = Math.floor(100000 + Math.random() * 900000).toString();
-            res.send({ message: "Invitación enviada (enviar email de invitación aquí)", invitationToken });
+        if (!invitedUser) {
+            return handleHttpError(res, "USER_NOT_FOUND", 404);
         }
 
+        // Verificar si ya se envió una invitación pendiente
+        const alreadyInvited = invitedUser.receivedInvitations?.some(inv => 
+            inv.inviterId.toString() === currentUser._id.toString() && 
+            inv.status === 'pending'
+        );
+
+        if (alreadyInvited) {
+            return handleHttpError(res, "INVITATION_ALREADY_SENT", 409);
+        }
+
+        // Verificar si ya pertenece a la compañía
+        if (invitedUser.company && 
+            invitedUser.company.partners && 
+            invitedUser.company.partners.some(p => p._id === currentUser._id.toString())) {
+            return handleHttpError(res, "USER_ALREADY_IN_COMPANY", 409);
+        }
+
+        // Crear objeto de invitación
+        const invitation = {
+            inviterId: currentUser._id,
+            inviterEmail: currentUser.email,
+            companyId: currentUser.company._id,
+            companyName: currentUser.company.name,
+            status: 'pending',
+            role: role
+        };
+
+        // Guardar la invitación en ambos usuarios
+        await usersModel.findByIdAndUpdate(invitedUser._id, {
+            $push: { receivedInvitations: invitation }
+        });
+
+        // También guardar en la lista de invitaciones enviadas del usuario actual
+        await usersModel.findByIdAndUpdate(currentUser._id, {
+            $push: { sentInvitations: { ...invitation, inviterId: invitedUser._id } }
+        });
+
+        res.send({ 
+            message: "Invitación enviada exitosamente",
+            invitedUser: {
+                _id: invitedUser._id,
+                email: invitedUser.email,
+                name: `${invitedUser.firstName} ${invitedUser.lastName}`
+            }
+        });
     } catch (err) {
-        console.log(err);
-        handleHttpError(res, "ERROR_INVITE_USER");
+        console.error(err);
+        handleHttpError(res, "ERROR_SENDING_INVITATION");
     }
 };
 
+/**
+ * Obtener todas las invitaciones recibidas
+ * @param {Object} req 
+ * @param {Object} res 
+ */
+const getReceivedInvitationsCtrl = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        
+        // Buscar usuario con populate para obtener más información del invitador
+        const user = await usersModel.findById(userId)
+            .select('receivedInvitations')
+            .populate({
+                path: 'receivedInvitations.inviterId',
+                select: 'firstName lastName email profilePicture'
+            });
+            
+        if (!user) {
+            return handleHttpError(res, "USER_NOT_FOUND", 404);
+        }
+        
+        res.send({ invitations: user.receivedInvitations || [] });
+    } catch (err) {
+        console.error(err);
+        handleHttpError(res, "ERROR_GETTING_INVITATIONS");
+    }
+};
 
-const uploadLogo = async(req, res)=>{
-    try{
+/**
+ * Obtener todas las invitaciones enviadas
+ * @param {Object} req 
+ * @param {Object} res 
+ */
+const getSentInvitationsCtrl = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        
+        const user = await usersModel.findById(userId)
+            .select('sentInvitations')
+            .populate({
+                path: 'sentInvitations.inviterId',
+                select: 'firstName lastName email profilePicture'
+            });
+            
+        if (!user) {
+            return handleHttpError(res, "USER_NOT_FOUND", 404);
+        }
+        
+        res.send({ invitations: user.sentInvitations || [] });
+    } catch (err) {
+        console.error(err);
+        handleHttpError(res, "ERROR_GETTING_SENT_INVITATIONS");
+    }
+};
+
+/**
+ * Aceptar una invitación
+ * @param {Object} req 
+ * @param {Object} res 
+ */
+const acceptInvitationCtrl = async (req, res) => {
+    try {
+        const { invitationId } = req.params;
+        const currentUser = req.user;
+        
+        // Buscar la invitación
+        const user = await usersModel.findById(currentUser._id);
+        
+        if (!user) {
+            return handleHttpError(res, "USER_NOT_FOUND", 404);
+        }
+        
+        // Encontrar la invitación específica
+        const invitation = user.receivedInvitations?.find(inv => 
+            inv._id.toString() === invitationId && inv.status === 'pending'
+        );
+        
+        if (!invitation) {
+            return handleHttpError(res, "INVITATION_NOT_FOUND_OR_ALREADY_PROCESSED", 404);
+        }
+        
+        // Buscar al invitador (para obtener información actualizada de la compañía)
+        const inviter = await usersModel.findById(invitation.inviterId);
+        
+        if (!inviter || !inviter.company) {
+            return handleHttpError(res, "INVITER_OR_COMPANY_NOT_FOUND", 404);
+        }
+        
+        // Actualizar el estado de la invitación a 'accepted'
+        await usersModel.updateOne(
+            { _id: currentUser._id, 'receivedInvitations._id': invitationId },
+            { $set: { 'receivedInvitations.$.status': 'accepted' } }
+        );
+        
+        // Actualizar también la invitación en el usuario invitador
+        await usersModel.updateOne(
+            { _id: invitation.inviterId, 'sentInvitations.inviterId': currentUser._id },
+            { $set: { 'sentInvitations.$.status': 'accepted' } }
+        );
+        
+        // Agregar al usuario como partners en la compañía si no lo está ya
+        if (!user.company || !user.company.partners || 
+            !user.company.partners.some(p => p._id === invitation.inviterId.toString())) {
+            
+            // Actualizar los datos de la compañía para el usuario
+            await usersModel.findByIdAndUpdate(currentUser._id, {
+                company: inviter.company,
+                $push: { 
+                    'company.partners': {
+                        _id: invitation.inviterId.toString(),
+                        role: invitation.role
+                    }
+                }
+            });
+            
+            // Agregar al usuario como partner en la compañía del invitador
+            await usersModel.findByIdAndUpdate(invitation.inviterId, {
+                $push: { 
+                    'company.partners': {
+                        _id: currentUser._id.toString(),
+                        role: 'user' // El invitado recibe rol de usuario normal
+                    }
+                }
+            });
+        }
+        
+        res.send({ 
+            message: "Invitación aceptada exitosamente",
+            company: inviter.company
+        });
+    } catch (err) {
+        console.error(err);
+        handleHttpError(res, "ERROR_ACCEPTING_INVITATION");
+    }
+};
+
+/**
+ * Rechazar una invitación
+ * @param {Object} req 
+ * @param {Object} res 
+ */
+const rejectInvitationCtrl = async (req, res) => {
+    try {
+        const { invitationId } = req.params;
+        const currentUser = req.user;
+        
+        // Buscar la invitación
+        const user = await usersModel.findById(currentUser._id);
+        
+        if (!user) {
+            return handleHttpError(res, "USER_NOT_FOUND", 404);
+        }
+        
+        // Encontrar la invitación específica
+        const invitation = user.receivedInvitations?.find(inv => 
+            inv._id.toString() === invitationId && inv.status === 'pending'
+        );
+        
+        if (!invitation) {
+            return handleHttpError(res, "INVITATION_NOT_FOUND_OR_ALREADY_PROCESSED", 404);
+        }
+        
+        // Actualizar el estado de la invitación a 'rejected'
+        await usersModel.updateOne(
+            { _id: currentUser._id, 'receivedInvitations._id': invitationId },
+            { $set: { 'receivedInvitations.$.status': 'rejected' } }
+        );
+        
+        // Actualizar también la invitación en el usuario invitador
+        await usersModel.updateOne(
+            { _id: invitation.inviterId, 'sentInvitations.inviterId': currentUser._id },
+            { $set: { 'sentInvitations.$.status': 'rejected' } }
+        );
+        
+        res.send({ message: "Invitación rechazada exitosamente" });
+    } catch (err) {
+        console.error(err);
+        handleHttpError(res, "ERROR_REJECTING_INVITATION");
+    }
+};
+
+/**
+ * Cancelar una invitación enviada
+ * @param {Object} req
+ * @param {Object} res
+ */
+const cancelInvitationCtrl = async (req, res) => {
+    try {
+        const { invitationId } = req.params;
+        const currentUser = req.user;
+        
+        // Buscar la invitación enviada
+        const user = await usersModel.findById(currentUser._id);
+        
+        if (!user) {
+            return handleHttpError(res, "USER_NOT_FOUND", 404);
+        }
+        
+        // Encontrar la invitación específica
+        const invitation = user.sentInvitations?.find(inv => 
+            inv._id.toString() === invitationId && inv.status === 'pending'
+        );
+        
+        if (!invitation) {
+            return handleHttpError(res, "INVITATION_NOT_FOUND_OR_ALREADY_PROCESSED", 404);
+        }
+        
+        // Eliminar la invitación del usuario invitado
+        await usersModel.updateOne(
+            { _id: invitation.inviterId },
+            { $pull: { receivedInvitations: { inviterId: currentUser._id } } }
+        );
+        
+        // Eliminar la invitación de las invitaciones enviadas
+        await usersModel.updateOne(
+            { _id: currentUser._id },
+            { $pull: { sentInvitations: { _id: invitationId } } }
+        );
+        
+        res.send({ message: "Invitación cancelada exitosamente" });
+    } catch (err) {
+        console.error(err);
+        handleHttpError(res, "ERROR_CANCELING_INVITATION");
+    }
+};
+
+// Actualizar logo
+const uploadLogo = async(req, res) => {
+    
+    try {
         const user = req.user;
+        console.log(user);
+        if (!req.file) {
+            return handleHttpError(res, "NO_FILE_PROVIDED", 400);
+        }
+        
         const buffer = req.file.buffer;
         const originalname = req.file.originalname;
         const file = {
-            buffer:buffer,
-            originalname:originalname
+            buffer: buffer,
+            originalname: originalname
         };
+        console.log(file);
         const {IpfsHash} = await uploadToPinata(file, originalname);
-        await usersModel.findByIdAndUpdate(user._id, {
+        
+        const updatedUser = await usersModel.findByIdAndUpdate(user._id, {
             $set: { profilePicture: `${process.env.PINATA_GATEWAY}/${IpfsHash}` }
         }, { new: true });
-        res.send({message: "logo actualizado"});
-    }catch(err){
+        
+        if (!updatedUser) {
+            return handleHttpError(res, "USER_NOT_FOUND", 404);
+        }
+        
+        res.send({
+            message: "Logo actualizado", 
+            profilePicture: updatedUser.profilePicture
+        });
+    } catch (err) {
         console.log(err);
         handleHttpError(res, "ERROR_UPDATE_LOGO");
     }
-
-}
-
-
+};
 
 module.exports = {
     registerCtrl,
@@ -287,6 +578,11 @@ module.exports = {
     deleteUserCtrl,
     forgotPasswordCtrl,
     resetPasswordCtrl,
-    inviteUserToCompanyCtrl,
-    uploadLogo
+    uploadLogo,
+    sendInvitationCtrl,
+    getReceivedInvitationsCtrl,
+    getSentInvitationsCtrl,
+    acceptInvitationCtrl,
+    rejectInvitationCtrl,
+    cancelInvitationCtrl
 };
