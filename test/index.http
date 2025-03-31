@@ -1,0 +1,63 @@
+### Prueba de registro de usuario
+POST http://localhost:3000/api/auth/register
+Content-Type: application/json
+
+{
+  "email": "test@example.com",
+  "password": "Password123",
+  "name": "Test User"
+}
+
+### Prueba de login de usuario
+POST http://localhost:3000/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "test@example.com",
+  "password": "Password123"
+}
+
+### Prueba de verificación de email
+POST http://localhost:3000/api/auth/verify-email
+Content-Type: application/json
+
+{
+  "email": "test@example.com",
+  "verificationCode": "123456"
+}
+
+### Prueba de cambio de contraseña
+POST http://localhost:3000/api/auth/forgot-password
+Content-Type: application/json
+
+{
+  "email": "test@example.com"
+}
+
+### Prueba de restablecimiento de contraseña
+POST http://localhost:3000/api/auth/reset-password
+Content-Type: application/json
+
+{
+  "token": "123456",
+  "newPassword": "NewPassword123"
+}
+
+### Prueba de obtener datos de usuario desde token
+GET http://localhost:3000/api/auth/me
+Authorization: Bearer <your_token_here>
+
+### Prueba de actualización de usuario (onboarding)
+PUT http://localhost:3000/api/auth/onboarding
+Authorization: Bearer <your_token_here>
+Content-Type: application/json
+
+{
+  "name": "Updated User",
+  "lastName": "Updated LastName",
+  "nif": "12345678Z"
+}
+
+### Prueba de eliminación de usuario
+DELETE http://localhost:3000/api/auth/delete
+Authorization: Bearer <your_token_here>
