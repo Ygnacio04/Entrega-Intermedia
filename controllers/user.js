@@ -406,22 +406,30 @@ const acceptInvitationCtrl = async (req, res) => {
             { $set: { 'sentInvitations.$.status': 'accepted' } }
         );
         
-        // Agregar al usuario como partners en la compañía si no lo está ya
-        if (!user.company || !user.company.partners || 
-            !user.company.partners.some(p => p._id === invitation.inviterId.toString())) {
-            
-            // Actualizar los datos de la compañía para el usuario
-            await usersModel.findByIdAndUpdate(currentUser._id, {
-                company: inviter.company,
-                $push: { 
-                    'company.partners': {
-                        _id: invitation.inviterId.toString(),
-                        role: invitation.role
-                    }
-                }
+        // Crear una copia de la compañía del invitador
+        const companyData = JSON.parse(JSON.stringify(inviter.company));
+        
+        // Asegúrate de que la matriz partners existe
+        if (!companyData.partners) {
+            companyData.partners = [];
+        }
+        
+        // Agregar al invitador como partner si aún no está
+        if (!companyData.partners.some(p => p._id === invitation.inviterId.toString())) {
+            companyData.partners.push({
+                _id: invitation.inviterId.toString(),
+                role: invitation.role
             });
-            
-            // Agregar al usuario como partner en la compañía del invitador
+        }
+        
+        // Actualizar la compañía del usuario en una sola operación
+        await usersModel.findByIdAndUpdate(currentUser._id, {
+            company: companyData
+        });
+        
+        // Agregar al usuario como partner en la compañía del invitador si no está ya
+        const inviterPartners = inviter.company.partners || [];
+        if (!inviterPartners.some(p => p._id === currentUser._id.toString())) {
             await usersModel.findByIdAndUpdate(invitation.inviterId, {
                 $push: { 
                     'company.partners': {
@@ -434,7 +442,7 @@ const acceptInvitationCtrl = async (req, res) => {
         
         res.send({ 
             message: "Invitación aceptada exitosamente",
-            company: inviter.company
+            company: companyData
         });
     } catch (err) {
         console.error(err);
@@ -534,10 +542,9 @@ const cancelInvitationCtrl = async (req, res) => {
 
 // Actualizar logo
 const uploadLogo = async(req, res) => {
-    
     try {
         const user = req.user;
-        console.log(user);
+        
         if (!req.file) {
             return handleHttpError(res, "NO_FILE_PROVIDED", 400);
         }
@@ -548,11 +555,18 @@ const uploadLogo = async(req, res) => {
             buffer: buffer,
             originalname: originalname
         };
-        console.log(file);
-        const {IpfsHash} = await uploadToPinata(file, originalname);
+        
+        const result = await uploadToPinata(file, originalname);
+        
+        if (!result || !result.IpfsHash) {
+            return handleHttpError(res, "ERROR_UPLOADING_TO_PINATA", 500);
+        }
+        
+        // Usar PINATA_GATEWAY del archivo .env
+        const profilePictureUrl = `${process.env.PINATA_GATEWAY}/${result.IpfsHash}`;
         
         const updatedUser = await usersModel.findByIdAndUpdate(user._id, {
-            $set: { profilePicture: `${process.env.PINATA_GATEWAY}/${IpfsHash}` }
+            $set: { profilePicture: profilePictureUrl }
         }, { new: true });
         
         if (!updatedUser) {
@@ -564,7 +578,7 @@ const uploadLogo = async(req, res) => {
             profilePicture: updatedUser.profilePicture
         });
     } catch (err) {
-        console.log(err);
+        console.error("Error completo al subir logo:", err);
         handleHttpError(res, "ERROR_UPDATE_LOGO");
     }
 };

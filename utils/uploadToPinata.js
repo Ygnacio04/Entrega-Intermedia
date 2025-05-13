@@ -4,9 +4,6 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 
-const pinataApiKey = process.env.PINATA_KEY;
-const pinataSecretApiKey = process.env.PINATA_SECRET;
-
 /**
  * Sube un archivo a Pinata IPFS
  * @param {Object} file - Objeto con buffer y nombre del archivo
@@ -15,6 +12,19 @@ const pinataSecretApiKey = process.env.PINATA_SECRET;
  */
 async function uploadToPinata(file, fileName) {
     try {
+        // Usar los nombres de variables de entorno correctos
+        const pinataApiKey = process.env.PINATA_API_KEY;
+        const pinataSecretApiKey = process.env.SECRET_API_KEY;
+        
+        console.log("Credenciales de Pinata:", {
+            keyExists: !!pinataApiKey,
+            secretExists: !!pinataSecretApiKey
+        });
+        
+        if (!pinataApiKey || !pinataSecretApiKey) {
+            throw new Error("Las credenciales de Pinata no están configuradas correctamente");
+        }
+        
         const url = `https://api.pinata.cloud/pinning/pinFileToIPFS`;
         // Crear un archivo temporal para almacenar el buffer
         const tempFilePath = path.join(os.tmpdir(), fileName);
@@ -39,20 +49,30 @@ async function uploadToPinata(file, fileName) {
         });
         formData.append('pinataOptions', options);
         
+        // Headers para la petición
+        const headers = {
+            'pinata_api_key': pinataApiKey,
+            'pinata_secret_api_key': pinataSecretApiKey,
+            ...formData.getHeaders()
+        };
+                
         // Enviar la petición a Pinata
-        const response = await fetch(url, {
-            
-            method: 'POST',
-            body: formData,
-            headers: {
-                'pinata_api_key': pinataApiKey,
-                'pinata_secret_api_key': pinataSecretApiKey
-            }
-        });
-        const responseData = response.json();
-        return responseData;
+        const response = await axios.post(url, formData, { headers });
+        
+        // Eliminar el archivo temporal después de la subida
+        if (fs.existsSync(tempFilePath)) {
+            fs.unlinkSync(tempFilePath);
+        }
+                
+        // Devolver los datos de la respuesta
+        return response.data;
     } catch (error) {
-        console.error('Error al subir archivo a Pinata:', error);
+        console.error('Error al subir archivo a Pinata:', error.message);
+        
+        // Mostrar más detalles del error si es una respuesta de Pinata
+        if (error.response) {
+            console.error('Detalles del error de Pinata:', error.response.data);
+        }
         
         // Si hay un error, asegurarse de limpiar archivos temporales si existen
         try {
